@@ -22,12 +22,13 @@ namespace AddressBroker
 
             using (_context = new Context(1))
             {
-                var notifyListenerThread = new Thread(ListenForNotifications);
+                var heartbeatListenerThread = new Thread(ListenForHeartbeats);
                 var getHostsListenerThread = new Thread(ListenForGetHosts);
 
-                notifyListenerThread.Start();
+                heartbeatListenerThread.Start();
                 getHostsListenerThread.Start();
 
+                Console.WriteLine("(press RETURN to stop)");
                 Console.ReadLine();
 
                 //shutdown threads
@@ -36,14 +37,7 @@ namespace AddressBroker
                 _running = false;
                 SendShutdownMessages(); 
                 Thread.Sleep(500);
-
-                notifyListenerThread.Abort();
-                getHostsListenerThread.Abort();
             }
-
-            Console.WriteLine();
-            Console.WriteLine("***** stopped - press RETURN to exit *****");
-            Console.ReadLine();
         }
 
         private static void SendShutdownMessages()
@@ -55,6 +49,7 @@ namespace AddressBroker
                     var host = string.Format(HostName, GetHostsPort);
                     socket.Connect(host);
                     socket.Send(AbortMessage, Encoding.Unicode);
+                    socket.Recv(Encoding.Unicode); 
                 }
 
                 using (var socket = context.Socket(SocketType.REQ))
@@ -62,6 +57,7 @@ namespace AddressBroker
                     var host = string.Format(HostName, HeartbeatPort);
                     socket.Connect(host);
                     socket.Send(AbortMessage, Encoding.Unicode);
+                    socket.Recv(Encoding.Unicode); 
                 }
             }
         }
@@ -85,13 +81,18 @@ namespace AddressBroker
                         //TODO:remove any hosts that have exceeded the heartbeat timeout
 
                         //TODO:return list of live hosts
-                        //socket.Send(SerializeHosts(_liveHosts), Encoding.Unicode);
+                        socket.Send(SerializeHosts(_liveHosts), Encoding.Unicode);
+                    }
+                    else
+                    {
+                        socket.Send("aborted", Encoding.Unicode);
+                        Console.WriteLine("get-hosts listener stopped");
                     }
                 }
             }
         }
 
-        private static void ListenForNotifications()
+        private static void ListenForHeartbeats()
         {
             using (var socket = _context.Socket(SocketType.REP))
             {
@@ -109,6 +110,13 @@ namespace AddressBroker
                     {
                         //TODO:if not in the hosts list add new service to live hosts list
                         //TODO:if already in the list update the last-communication time
+
+                        socket.Send("received", Encoding.Unicode);
+                    }
+                    else
+                    {
+                        socket.Send("aborted", Encoding.Unicode);
+                        Console.WriteLine("heartbeat listener stopped");
                     }
                 }
             }

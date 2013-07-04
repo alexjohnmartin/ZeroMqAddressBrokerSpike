@@ -22,14 +22,12 @@ namespace PublisherWithHeartbeat
             heartbeatThread.Start();
 
             Console.WriteLine("running...");
+            Console.WriteLine("(press RETURN to stop)");
             Console.ReadLine();
 
             Console.WriteLine("shutting down...");
             _running = false; 
             Thread.Sleep(HeartBeatIntervalInMilliseconds + 100);
-
-            Console.WriteLine("...done");
-            Console.ReadLine(); 
         }
 
         private static void SendHeartbeat()
@@ -43,9 +41,11 @@ namespace PublisherWithHeartbeat
 
                     while (_running)
                     {
-                        Console.WriteLine("sending notification...");
+                        Console.Write("sending notification...");
                         socket.Send(string.Format(HeartbeatMessage, _processGuid), Encoding.Unicode);
-
+                    
+                        var response = socket.Recv(Encoding.Unicode); 
+                        Console.WriteLine(" ...received repsonse - " + response);
                         Thread.Sleep(HeartBeatIntervalInMilliseconds);
                     }
                 }
