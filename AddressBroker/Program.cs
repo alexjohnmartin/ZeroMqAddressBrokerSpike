@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Text;
 using System.Threading;
 using ZMQ;
@@ -9,24 +10,28 @@ namespace AddressBroker
     class Program
     {
         private static bool _running = true; 
-        private static List<Host> _liveHosts;
+        private static IDictionary<string, DateTime> _liveHosts;
         private static Context _context;
         private const string HeartbeatPort = "6001";
         private const string GetHostsPort = "6002";
         private const string HostName = "tcp://127.0.0.1:{0}";
         private const string AbortMessage = "abort";
+        private const int MaximumIntervalWithoutHeartbeatInMilliseconds = 5000;
+        private const int CleanupUnresponsiveHostsIntervalInMilliseconds = 100; 
 
         static void Main(string[] args)
         {
-            _liveHosts = new List<Host>();
+            _liveHosts = new Dictionary<string, DateTime>();
 
             using (_context = new Context(1))
             {
                 var heartbeatListenerThread = new Thread(ListenForHeartbeats);
                 var getHostsListenerThread = new Thread(ListenForGetHosts);
+                var cleanupHostsThread = new Thread(CleanupHosts); 
 
                 heartbeatListenerThread.Start();
                 getHostsListenerThread.Start();
+                cleanupHostsThread.Start();
 
                 Console.WriteLine("(press RETURN to stop)");
                 Console.ReadLine();
@@ -37,6 +42,22 @@ namespace AddressBroker
                 _running = false;
                 SendShutdownMessages(); 
                 Thread.Sleep(500);
+            }
+        }
+
+        private static void CleanupHosts()
+        {
+            while (_running)
+            {
+                var deadHosts = _liveHosts.Where(h => h.Value.AddMilliseconds(MaximumIntervalWithoutHeartbeatInMilliseconds) < DateTime.UtcNow).Select(h => h.Key).ToList();
+                foreach (var deadHost in deadHosts)
+                {
+                    Console.WriteLine();
+                    Console.WriteLine("*********** HOST {0} IS DEAD *************", deadHost);
+                    _liveHosts.Remove(deadHost);
+                }
+
+                Thread.Sleep(CleanupUnresponsiveHostsIntervalInMilliseconds);
             }
         }
 
@@ -78,10 +99,7 @@ namespace AddressBroker
 
                     if (message != AbortMessage)
                     {
-                        //TODO:remove any hosts that have exceeded the heartbeat timeout
-
-                        //TODO:return list of live hosts
-                        socket.Send(SerializeHosts(_liveHosts), Encoding.Unicode);
+                        socket.Send(SerializeHosts(_liveHosts.Keys), Encoding.Unicode);
                     }
                     else
                     {
@@ -108,10 +126,20 @@ namespace AddressBroker
 
                     if (message != AbortMessage)
                     {
-                        //TODO:if not in the hosts list add new service to live hosts list
-                        //TODO:if already in the list update the last-communication time
-
-                        socket.Send("received", Encoding.Unicode);
+                        if (!_liveHosts.ContainsKey(message))
+                        {
+                            //if not in the hosts list add new service to live hosts list
+                            Console.WriteLine();
+                            Console.WriteLine("New host {0} online", message);
+                            _liveHosts.Add(message, DateTime.UtcNow);
+                        }
+                        else
+                        {
+                            //if already in the list update the last-communication time
+                            _liveHosts[message] = DateTime.UtcNow; 
+                        }
+                        
+                        socket.Send("ok", Encoding.Unicode);
                     }
                     else
                     {
@@ -122,9 +150,9 @@ namespace AddressBroker
             }
         }
 
-        private static string SerializeHosts(List<Host> liveHosts)
+        private static string SerializeHosts(IEnumerable<string> liveHosts)
         {
-            return "test";
+            return liveHosts.Aggregate((current, next) => current + "|" + next); 
         }
     }
 }
