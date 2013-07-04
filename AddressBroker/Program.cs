@@ -16,8 +16,11 @@ namespace AddressBroker
         private const string GetHostsPort = "6002";
         private const string HostName = "tcp://127.0.0.1:{0}";
         private const string AbortMessage = "abort";
-        private const int MaximumIntervalWithoutHeartbeatInMilliseconds = 5000;
-        private const int CleanupUnresponsiveHostsIntervalInMilliseconds = 100; 
+        private const string EmptyListMessage = "(empty)"; 
+        private const char ListSeparator = '|'; 
+        private const int MaximumIntervalWithoutHeartbeatInMilliseconds = 2000;
+        private const int CleanupUnresponsiveHostsIntervalInMilliseconds = 100;
+        private const int ReceiveMessageTimeoutInMilliseconds = 100;
 
         static void Main(string[] args)
         {
@@ -93,18 +96,21 @@ namespace AddressBroker
 
                 while (_running)
                 {
-                    var message = socket.Recv(Encoding.Unicode);
-                    Console.WriteLine();
-                    Console.WriteLine("Received get-hosts message: " + message);
-
-                    if (message != AbortMessage)
+                    var message = socket.Recv(Encoding.Unicode, ReceiveMessageTimeoutInMilliseconds);
+                    if (!string.IsNullOrEmpty(message))
                     {
-                        socket.Send(SerializeHosts(_liveHosts.Keys), Encoding.Unicode);
-                    }
-                    else
-                    {
-                        socket.Send("aborted", Encoding.Unicode);
-                        Console.WriteLine("get-hosts listener stopped");
+                        //Console.WriteLine();
+                        //Console.WriteLine("Received get-hosts message: " + message);
+                    
+                        if (message != AbortMessage)
+                        {
+                            socket.Send(SerializeHosts(_liveHosts.Keys), Encoding.Unicode);
+                        }
+                        else
+                        {
+                            socket.Send("aborted", Encoding.Unicode);
+                            Console.WriteLine("get-hosts listener stopped");
+                        }
                     }
                 }
             }
@@ -120,31 +126,34 @@ namespace AddressBroker
 
                 while (_running)
                 {
-                    var message = socket.Recv(Encoding.Unicode);
-                    Console.WriteLine();
-                    Console.WriteLine("Received heartbeat message: " + message);
-
-                    if (message != AbortMessage)
+                    var message = socket.Recv(Encoding.Unicode, ReceiveMessageTimeoutInMilliseconds);
+                    if (!string.IsNullOrEmpty(message))
                     {
-                        if (!_liveHosts.ContainsKey(message))
+                        //Console.WriteLine();
+                        //Console.WriteLine("Received heartbeat message: " + message);
+
+                        if (message != AbortMessage)
                         {
-                            //if not in the hosts list add new service to live hosts list
-                            Console.WriteLine();
-                            Console.WriteLine("New host {0} online", message);
-                            _liveHosts.Add(message, DateTime.UtcNow);
+                            if (!_liveHosts.ContainsKey(message))
+                            {
+                                //if not in the hosts list add new service to live hosts list
+                                Console.WriteLine();
+                                Console.WriteLine("New host {0} online", message);
+                                _liveHosts.Add(message, DateTime.UtcNow);
+                            }
+                            else
+                            {
+                                //if already in the list update the last-communication time
+                                _liveHosts[message] = DateTime.UtcNow;
+                            }
+
+                            socket.Send("ok", Encoding.Unicode);
                         }
                         else
                         {
-                            //if already in the list update the last-communication time
-                            _liveHosts[message] = DateTime.UtcNow; 
+                            socket.Send("aborted", Encoding.Unicode);
+                            Console.WriteLine("heartbeat listener stopped");
                         }
-                        
-                        socket.Send("ok", Encoding.Unicode);
-                    }
-                    else
-                    {
-                        socket.Send("aborted", Encoding.Unicode);
-                        Console.WriteLine("heartbeat listener stopped");
                     }
                 }
             }
@@ -152,7 +161,10 @@ namespace AddressBroker
 
         private static string SerializeHosts(IEnumerable<string> liveHosts)
         {
-            return liveHosts.Aggregate((current, next) => current + "|" + next); 
+            if (liveHosts.Any())
+                return liveHosts.Aggregate((current, next) => current + ListSeparator + next);
+
+            return EmptyListMessage; 
         }
     }
 }

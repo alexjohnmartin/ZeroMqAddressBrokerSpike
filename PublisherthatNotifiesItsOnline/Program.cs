@@ -7,20 +7,25 @@ namespace PublisherWithHeartbeat
 {
     class Program
     {
-        private static Guid _processGuid;
-        private static bool _running = true;
-        private static bool _brokerAlive = true;
-        private static Context _context;
         private const string HeartbeatPort = "6001";
         private const string PublishMessage = "parkingEvent ThisIsCoolRight?";
         private const string PublishPort = "6000";
         private const string HostName = "tcp://127.0.0.1:{0}";
-        private const int HeartBeatIntervalInMilliseconds = 3000;
-        private const int BrokerDeadIntervalInMilliseconds = 10000; 
+        private const int HeartBeatIntervalInMilliseconds = 1000;
+        private const int BrokerDeadIntervalInMilliseconds = 3000;
+        private const int HeartBeatTimeoutInMilliseconds = 100;
+
+        private static bool _running;
+        private static bool _brokerAlive;
+        private static Context _context;
+        private static string _heartbeatHost;
+        private static string _publishHost;
 
         static void Main(string[] args)
         {
-            _processGuid = Guid.NewGuid();
+            _running = true; 
+            _heartbeatHost = string.Format(HostName, HeartbeatPort);
+            _publishHost = string.Format(HostName, PublishPort);
 
             using (_context = new Context(1))
             {
@@ -45,51 +50,68 @@ namespace PublisherWithHeartbeat
             var random = new Random(); 
             using (var socket = _context.Socket(SocketType.PUB))
             {
-                var host = string.Format(HostName, PublishPort);
-                socket.Connect(host);
+                socket.Bind(_publishHost);
 
-                while (_running && _brokerAlive)
+                while (_running)
                 {
-                    Console.Write("publishing message...");
-                    socket.Send(PublishMessage, Encoding.Unicode);
+                    if (_brokerAlive)
+                    {
+                        Console.WriteLine("publishing message...");
+                        socket.Send(PublishMessage, Encoding.Unicode);
 
-                    Thread.Sleep(random.Next(100, HeartBeatIntervalInMilliseconds));
+                        Thread.Sleep(random.Next(100, HeartBeatIntervalInMilliseconds));
+                    }
+                    else
+                    {
+                        Thread.Sleep(BrokerDeadIntervalInMilliseconds);
+                    }
                 }
             }
         }
 
         private static void SendHeartbeat()
         {
-            var heartbeatHost = string.Format(HostName, HeartbeatPort);
-            var publishHost = string.Format(HostName, PublishPort);
-
-            using (var socket = _context.Socket(SocketType.REQ))
+            while (_running)
             {
-                socket.Connect(heartbeatHost);
-
-                while (_running)
+                using (var socket = _context.Socket(SocketType.REQ))
                 {
-                    Console.Write("sending heartbeat...");
-
                     try
                     {
-                        socket.Send(publishHost, Encoding.Unicode);
-                        var response = socket.Recv(Encoding.Unicode, 100);
-                        Console.WriteLine(" ...received repsonse - " + response);
+                        //Console.Write("sending heartbeat...");
+                        socket.Connect(_heartbeatHost);
+                        socket.Send(_publishHost, Encoding.Unicode);
+                        var response = socket.Recv(Encoding.Unicode, HeartBeatTimeoutInMilliseconds);
+                        //Console.WriteLine(" ...received repsonse - " + response);
 
-                        _brokerAlive = true; 
-                        Thread.Sleep(HeartBeatIntervalInMilliseconds);
+                        if (!string.IsNullOrEmpty(response))
+                        {
+                            if (!_brokerAlive)
+                            {
+                                Console.WriteLine("address broker alive");
+                                _brokerAlive = true;
+                            }
+                            
+                            Thread.Sleep(HeartBeatIntervalInMilliseconds);
+                        }
+                        else
+                        {
+                            BrokerIsDeadPause();
+                        }
                     }
-                    catch (System.Exception exception)
+                    catch (ZMQ.Exception exception)
                     {
-                        Console.WriteLine("...error: " + exception.Message);
-                        Console.WriteLine("Address broker probably unreachable - pausing");
-
-                        _brokerAlive = false; 
-                        Thread.Sleep(BrokerDeadIntervalInMilliseconds);
+                        Console.WriteLine("...heartbeat error: " + exception.Message);
+                        BrokerIsDeadPause();
                     }
                 }
             }
+        }
+
+        private static void BrokerIsDeadPause()
+        {
+            _brokerAlive = false;
+            Console.WriteLine("Address broker probably unreachable - pausing");
+            Thread.Sleep(BrokerDeadIntervalInMilliseconds);
         }
     }
 }
