@@ -4,12 +4,14 @@ using System.Linq;
 using System.Text;
 using System.Threading;
 using ZMQ;
+using log4net;
 
 namespace AddressBroker
 {
     public class AddressBroker
     {
         private readonly AddressBrokerConfig _config;
+        private readonly ILog _log;
 
         public void Start()
         {
@@ -27,8 +29,7 @@ namespace AddressBroker
 
         public void Stop()
         {
-            Console.WriteLine();
-            Console.WriteLine("***** shutting down *****");
+            _log.Info("shutting down");
             _running = false;
             SendShutdownMessages();
             Thread.Sleep(500);
@@ -42,8 +43,7 @@ namespace AddressBroker
                 var deadHosts = _liveHosts.Where(h => h.Value.AddMilliseconds(_config.MaximumIntervalWithoutHeartbeatInMilliseconds) < DateTime.UtcNow).Select(h => h.Key).ToList();
                 foreach (var deadHost in deadHosts)
                 {
-                    Console.WriteLine();
-                    Console.WriteLine("*********** HOST {0} IS DEAD *************", deadHost);
+                    _log.WarnFormat("HOST {0} IS DEAD", deadHost);
                     _liveHosts.Remove(deadHost);
                 }
 
@@ -79,16 +79,13 @@ namespace AddressBroker
             {
                 var host = String.Format(_config.HostName, _config.GetHostsPort);
                 socket.Bind(host);
-                Console.WriteLine("Listening for get-hosts messages on " + host);
+                _log.Info("Listening for get-hosts messages on " + host);
 
                 while (_running)
                 {
                     var message = socket.Recv(Encoding.Unicode, _config.ReceiveMessageTimeoutInMilliseconds);
                     if (!String.IsNullOrEmpty(message))
                     {
-                        //Console.WriteLine();
-                        //Console.WriteLine("Received get-hosts message: " + message);
-
                         if (message != AbortMessage)
                         {
                             socket.Send(SerializeHosts(_liveHosts.Keys), Encoding.Unicode);
@@ -96,7 +93,7 @@ namespace AddressBroker
                         else
                         {
                             socket.Send("aborted", Encoding.Unicode);
-                            Console.WriteLine("get-hosts listener stopped");
+                            _log.Info("get-hosts listener stopped");
                         }
                     }
                 }
@@ -109,23 +106,19 @@ namespace AddressBroker
             {
                 var host = String.Format(_config.HostName, _config.HeartbeatPort);
                 socket.Bind(host);
-                Console.WriteLine("Listening for heartbeat messages on " + host);
+                _log.Info("Listening for heartbeat messages on " + host);
 
                 while (_running)
                 {
                     var message = socket.Recv(Encoding.Unicode, _config.ReceiveMessageTimeoutInMilliseconds);
                     if (!String.IsNullOrEmpty(message))
                     {
-                        //Console.WriteLine();
-                        //Console.WriteLine("Received heartbeat message: " + message);
-
                         if (message != AbortMessage)
                         {
                             if (!_liveHosts.ContainsKey(message))
                             {
                                 //if not in the hosts list add new service to live hosts list
-                                Console.WriteLine();
-                                Console.WriteLine("New host {0} online", message);
+                                _log.InfoFormat("New host {0} online", message);
                                 _liveHosts.Add(message, DateTime.UtcNow);
                             }
                             else
@@ -139,7 +132,7 @@ namespace AddressBroker
                         else
                         {
                             socket.Send("aborted", Encoding.Unicode);
-                            Console.WriteLine("heartbeat listener stopped");
+                            _log.Info("heartbeat listener stopped");
                         }
                     }
                 }
@@ -157,11 +150,12 @@ namespace AddressBroker
         private Context _context;
         private const string AbortMessage = "abort";
 
-        public AddressBroker(AddressBrokerConfig config)
+        public AddressBroker(AddressBrokerConfig config, ILog log)
         {
             _config = config;
+            _log = log;
         }
 
-        public AddressBroker() : this(new AddressBrokerConfig()) {}
+        public AddressBroker() : this(new AddressBrokerConfig(), LogManager.GetLogger(typeof(AddressBroker))) {}
     }
 }
