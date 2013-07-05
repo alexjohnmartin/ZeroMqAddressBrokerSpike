@@ -31,8 +31,7 @@ namespace AddressBroker
         {
             _log.Info("shutting down");
             _running = false;
-            SendShutdownMessages();
-            Thread.Sleep(500);
+            Thread.Sleep(_config.ReceiveMessageTimeoutInMilliseconds + 100);
             _context.Dispose();
         }
 
@@ -51,28 +50,6 @@ namespace AddressBroker
             }
         }
 
-        private void SendShutdownMessages()
-        {
-            using (var context = new Context(1))
-            {
-                using (var socket = context.Socket(SocketType.REQ))
-                {
-                    var host = String.Format(_config.HostName, _config.GetHostsPort);
-                    socket.Connect(host);
-                    socket.Send(AbortMessage, Encoding.Unicode);
-                    socket.Recv(Encoding.Unicode);
-                }
-
-                using (var socket = context.Socket(SocketType.REQ))
-                {
-                    var host = String.Format(_config.HostName, _config.HeartbeatPort);
-                    socket.Connect(host);
-                    socket.Send(AbortMessage, Encoding.Unicode);
-                    socket.Recv(Encoding.Unicode);
-                }
-            }
-        }
-
         private void ListenForGetHosts()
         {
             using (var socket = _context.Socket(SocketType.REP))
@@ -86,17 +63,10 @@ namespace AddressBroker
                     var message = socket.Recv(Encoding.Unicode, _config.ReceiveMessageTimeoutInMilliseconds);
                     if (!String.IsNullOrEmpty(message))
                     {
-                        if (message != AbortMessage)
-                        {
-                            socket.Send(SerializeHosts(_liveHosts.Keys), Encoding.Unicode);
-                        }
-                        else
-                        {
-                            socket.Send("aborted", Encoding.Unicode);
-                            _log.Info("get-hosts listener stopped");
-                        }
+                        socket.Send(SerializeHosts(_liveHosts.Keys), Encoding.Unicode);
                     }
                 }
+                _log.Info("get-hosts listener stopped");
             }
         }
 
@@ -113,29 +83,26 @@ namespace AddressBroker
                     var message = socket.Recv(Encoding.Unicode, _config.ReceiveMessageTimeoutInMilliseconds);
                     if (!String.IsNullOrEmpty(message))
                     {
-                        if (message != AbortMessage)
-                        {
-                            if (!_liveHosts.ContainsKey(message))
-                            {
-                                //if not in the hosts list add new service to live hosts list
-                                _log.InfoFormat("New host {0} online", message);
-                                _liveHosts.Add(message, DateTime.UtcNow);
-                            }
-                            else
-                            {
-                                //if already in the list update the last-communication time
-                                _liveHosts[message] = DateTime.UtcNow;
-                            }
-
-                            socket.Send("ok", Encoding.Unicode);
-                        }
-                        else
-                        {
-                            socket.Send("aborted", Encoding.Unicode);
-                            _log.Info("heartbeat listener stopped");
-                        }
+                        AddOrUpdateHostInList(message);
+                        socket.Send("ok", Encoding.Unicode);
                     }
                 }
+                _log.Info("heartbeat listener stopped");
+            }
+        }
+
+        private void AddOrUpdateHostInList(string message)
+        {
+            if (!_liveHosts.ContainsKey(message))
+            {
+                //if not in the hosts list add new service to live hosts list
+                _log.InfoFormat("New host {0} online", message);
+                _liveHosts.Add(message, DateTime.UtcNow);
+            }
+            else
+            {
+                //if already in the list update the last-communication time
+                _liveHosts[message] = DateTime.UtcNow;
             }
         }
 
@@ -148,7 +115,6 @@ namespace AddressBroker
         private bool _running = true;
         private IDictionary<string, DateTime> _liveHosts;
         private Context _context;
-        private const string AbortMessage = "abort";
 
         public AddressBroker(AddressBrokerConfig config, ILog log)
         {
