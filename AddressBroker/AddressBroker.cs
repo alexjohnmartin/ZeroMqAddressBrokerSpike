@@ -11,7 +11,7 @@ namespace AddressBroker
     {
         private readonly AddressBrokerConfig _config;
 
-        public void Run()
+        public void Start()
         {
             _liveHosts = new Dictionary<string, DateTime>();
             _context = new Context(1);

@@ -13,7 +13,7 @@ namespace AddressBroker
                     x.Service<AddressBroker>(s =>
                         {
                             s.ConstructUsing(ab => new AddressBroker());
-                            s.WhenStarted(ab => ab.Run());
+                            s.WhenStarted(ab => ab.Start());
                             s.WhenStopped(ab => ab.Stop());
                             s.WhenShutdown(ab => ab.Stop());
                         });
