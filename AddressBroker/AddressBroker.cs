@@ -20,11 +20,9 @@ namespace AddressBroker
             
             var heartbeatListenerThread = new Thread(ListenForHeartbeats);
             var getHostsListenerThread = new Thread(ListenForGetHosts);
-            var cleanupHostsThread = new Thread(CleanupHosts);
 
             heartbeatListenerThread.Start();
             getHostsListenerThread.Start();
-            cleanupHostsThread.Start();
         }
 
         public void Stop()
@@ -35,60 +33,61 @@ namespace AddressBroker
             _context.Dispose();
         }
 
-        private void CleanupHosts()
-        {
-            while (_running)
-            {
-                var deadHosts = _liveHosts.Where(h => h.Value.AddMilliseconds(_config.MaximumIntervalWithoutHeartbeatInMilliseconds) < DateTime.UtcNow).Select(h => h.Key).ToList();
-                foreach (var deadHost in deadHosts)
-                {
-                    _log.WarnFormat("HOST {0} IS DEAD", deadHost);
-                    _liveHosts.Remove(deadHost);
-                }
-
-                Thread.Sleep(_config.CleanupUnresponsiveHostsIntervalInMilliseconds);
-            }
-        }
-
         private void ListenForGetHosts()
         {
-            using (var socket = _context.Socket(SocketType.REP))
+            var host = String.Format(_config.HostName, _config.GetHostsPort);
+            _log.Info("Listening for get-hosts messages on " + host);
+            try
             {
-                var host = String.Format(_config.HostName, _config.GetHostsPort);
-                socket.Bind(host);
-                _log.Info("Listening for get-hosts messages on " + host);
-
-                while (_running)
+                using (var socket = _context.Socket(SocketType.REP))
                 {
-                    var message = socket.Recv(Encoding.Unicode, _config.ReceiveMessageTimeoutInMilliseconds);
-                    if (!String.IsNullOrEmpty(message))
+                    socket.Bind(host);
+                    while (_running)
                     {
-                        socket.Send(SerializeHosts(_liveHosts.Keys), Encoding.Unicode);
+                        var message = socket.Recv(Encoding.Unicode, _config.ReceiveMessageTimeoutInMilliseconds);
+                        if (!String.IsNullOrEmpty(message))
+                        {
+                            socket.Send(SerializeHosts(_liveHosts.Keys), Encoding.Unicode);
+                        }
                     }
                 }
-                _log.Info("get-hosts listener stopped");
             }
+            catch (ZMQ.Exception exception)
+            {
+                _log.Error("Error listening for get-hosts messages", exception);
+                _running = false; 
+            }
+            _log.Info("get-hosts listener stopped");
         }
 
         private void ListenForHeartbeats()
         {
-            using (var socket = _context.Socket(SocketType.REP))
+            var host = String.Format(_config.HostName, _config.HeartbeatPort);
+            _log.Info("Listening for heartbeat messages on " + host);
+            try
             {
-                var host = String.Format(_config.HostName, _config.HeartbeatPort);
-                socket.Bind(host);
-                _log.Info("Listening for heartbeat messages on " + host);
-
-                while (_running)
+                using (var socket = _context.Socket(SocketType.REP))
                 {
-                    var message = socket.Recv(Encoding.Unicode, _config.ReceiveMessageTimeoutInMilliseconds);
-                    if (!String.IsNullOrEmpty(message))
+                    socket.Bind(host);
+
+                    while (_running)
                     {
-                        AddOrUpdateHostInList(message);
-                        socket.Send("ok", Encoding.Unicode);
+                        var message = socket.Recv(Encoding.Unicode, _config.ReceiveMessageTimeoutInMilliseconds);
+                        if (!String.IsNullOrEmpty(message))
+                        {
+                            AddOrUpdateHostInList(message);
+                            CleanupHosts();
+                            socket.Send("ok", Encoding.Unicode);
+                        }
                     }
                 }
-                _log.Info("heartbeat listener stopped");
             }
+            catch (ZMQ.Exception exception)
+            {
+                _log.Error("Error listening for heart-beats", exception);
+                _running = false; 
+            }
+            _log.Info("heartbeat listener stopped");
         }
 
         private void AddOrUpdateHostInList(string message)
@@ -103,6 +102,16 @@ namespace AddressBroker
             {
                 //if already in the list update the last-communication time
                 _liveHosts[message] = DateTime.UtcNow;
+            }
+        }
+
+        private void CleanupHosts()
+        {
+            var deadHosts = _liveHosts.Where(h => h.Value.AddMilliseconds(_config.MaximumIntervalWithoutHeartbeatInMilliseconds) < DateTime.UtcNow).Select(h => h.Key).ToList();
+            foreach (var deadHost in deadHosts)
+            {
+                _log.WarnFormat("HOST {0} IS DEAD", deadHost);
+                _liveHosts.Remove(deadHost);
             }
         }
 
